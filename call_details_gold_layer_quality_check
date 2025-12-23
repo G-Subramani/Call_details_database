@@ -1,0 +1,58 @@
+-- Total rows
+TRUNCATE TABLE gold.fact_call_summary;
+SELECT COUNT(*) FROM gold.fact_call_summary;
+
+SELECT * FROM gold.fact_call_summary LIMIT 10;
+
+--Answered calls
+SELECT COUNT(DISTINCT(call_key)) 
+FROM gold.fact_call_summary
+WHERE full_date BETWEEN '2025-01-01' AND '2025-01-31' 
+AND answered_flag=TRUE
+AND call_type='Inbound';
+
+-- Missed calls
+SELECT COUNT(DISTINCT(call_key)) 
+FROM gold.fact_call_summary
+WHERE full_date BETWEEN '2025-01-01' AND '2025-01-31'
+AND answered_flag=FALSE
+AND missed_flag=TRUE
+AND call_type='Inbound';
+
+-- Missed calls with callbacks
+SELECT COUNT(DISTINCT (call_key))
+FROM gold.fact_call_summary
+WHERE full_date BETWEEN DATE '2025-01-01' AND DATE '2025-01-31'
+  AND call_type = 'Inbound'
+  AND missed_flag = TRUE
+  AND same_day_callback_flag = TRUE;
+
+-- Missed calls with callbacks
+SELECT COUNT(DISTINCT (call_key))
+FROM gold.fact_call_summary
+WHERE full_date BETWEEN DATE '2025-01-01' AND DATE '2025-01-31'
+  AND call_type = 'Inbound'
+  AND missed_flag = TRUE
+  AND next_day_callback_flag = TRUE;
+  
+
+
+-- Callback breakdown
+SELECT
+    same_day_callback_flag,
+    next_day_callback_flag,
+    COUNT(*)
+FROM gold.fact_call_summary
+GROUP BY 1, 2;
+
+-- No NULL call_key allowed
+SELECT COUNT(*)
+FROM gold.fact_call_summary
+WHERE call_key IS NULL;
+
+-- FK coverage check
+SELECT COUNT(*)
+FROM gold.fact_call_summary f
+LEFT JOIN gold.dim_call_id d
+  ON f.call_key = d.call_key
+WHERE d.call_key IS NULL;
