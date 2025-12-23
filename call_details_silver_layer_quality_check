@@ -1,0 +1,161 @@
+-- Natural key must never be NULL
+SELECT COUNT(*) AS null_natural_key_count
+FROM silver.silver_call_events
+WHERE call_natural_key IS NULL;
+
+--Duplicate Natural Keys (Idempotency Break)
+SELECT
+    call_natural_key,
+    COUNT(*) AS cnt
+FROM silver.silver_call_events
+GROUP BY call_natural_key
+HAVING COUNT(*) > 1;
+
+--Duplicate check call_id
+
+SELECT 
+	call_id,
+	COUNT(*) AS cnt
+FROM silver.silver_call_events
+GROUP BY call_id
+HAVING COUNT(*)>1;
+--count of all unique id
+SELECT COUNT(DISTINCT call_id)
+FROM silver.silver_call_events
+WHERE call_date between '2025-02-01' AND '2025-02-28';
+
+
+-- Start must be <= End
+SELECT COUNT(*) AS invalid_time_order
+FROM silver.silver_call_events
+WHERE end_ts < start_ts;
+
+-- Duration must be >= talk time
+SELECT COUNT(*) AS invalid_duration
+FROM silver.silver_call_events
+WHERE duration_sec < talk_time_sec;
+
+--Answered vs Missed Flag Consistency
+
+SELECT COUNT(*) AS invalid_flag_combo
+FROM silver.silver_call_events
+WHERE answered_flag = missed_flag;
+
+--Mandatory Business Fields
+
+SELECT COUNT(*) AS missing_core_fields
+FROM silver.silver_call_events
+WHERE
+    ucid IS NULL
+    OR caller_no_clean IS NULL
+    OR call_date IS NULL
+    OR start_ts IS NULL;
+--Warning / Monitoring Checks (NON-BLOCKING)
+--These are allowed, but must be tracked.
+--Foreign / Unknown Caller Ratio
+SELECT
+    caller_country,
+    COUNT(*) AS calls
+FROM silver.silver_call_events
+GROUP BY caller_country;
+
+--Extremely Long Calls (Outliers)
+SELECT
+    COUNT(*) AS long_calls
+FROM silver.silver_call_events
+WHERE duration_sec > 4 * 60 * 60; -- 4 hours
+
+--Missing Pickup on Answered Calls
+SELECT COUNT(*) AS answered_without_pickup
+FROM silver.silver_call_events
+WHERE answered_flag = TRUE
+  AND pickup_ts IS NULL;
+
+--Agent Coverage
+
+SELECT
+    COUNT(*) AS missing_agent
+FROM silver.silver_call_events
+WHERE agent IS NULL;
+
+-- Answered calls must have agent
+SELECT COUNT(*)
+FROM silver.silver_call_events
+WHERE answered_flag = TRUE
+  AND agent_id IS NULL;
+
+
+--Centralized Silver DQ Results Table (BEST PRACTICE)
+
+CREATE TABLE IF NOT EXISTS silver.silver_data_quality_log (
+    dq_run_ts TIMESTAMP DEFAULT clock_timestamp(),
+    check_name TEXT,
+    issue_count INT,
+    severity TEXT, -- BLOCKER / WARNING
+    status TEXT    -- PASS / FAIL
+);
+--Silver DQ Check Procedure (PRODUCTION)
+
+CREATE OR REPLACE PROCEDURE silver.run_silver_dq_checks()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_cnt INT;
+BEGIN
+    -- 1. Natural key nulls (BLOCKER)
+    SELECT COUNT(*) INTO v_cnt
+    FROM silver.silver_call_events
+    WHERE call_natural_key IS NULL;
+
+    INSERT INTO silver.silver_data_quality_log
+    VALUES (clock_timestamp(), 'NULL_NATURAL_KEY', v_cnt, 'BLOCKER',
+            CASE WHEN v_cnt = 0 THEN 'PASS' ELSE 'FAIL' END);
+
+    -- 2. Duplicate natural keys (BLOCKER)
+    SELECT COUNT(*) INTO v_cnt
+    FROM (
+        SELECT call_natural_key
+        FROM silver.silver_call_events
+        GROUP BY call_natural_key
+        HAVING COUNT(*) > 1
+    ) d;
+
+    INSERT INTO silver.silver_data_quality_log
+    VALUES (clock_timestamp(), 'DUPLICATE_NATURAL_KEY', v_cnt, 'BLOCKER',
+            CASE WHEN v_cnt = 0 THEN 'PASS' ELSE 'FAIL' END);
+
+    -- 3. Time order (BLOCKER)
+    SELECT COUNT(*) INTO v_cnt
+    FROM silver.silver_call_events
+    WHERE end_ts < start_ts;
+
+    INSERT INTO silver.silver_data_quality_log
+    VALUES (clock_timestamp(), 'INVALID_TIME_ORDER', v_cnt, 'BLOCKER',
+            CASE WHEN v_cnt = 0 THEN 'PASS' ELSE 'FAIL' END);
+
+    -- 4. Duration sanity (WARNING)
+    SELECT COUNT(*) INTO v_cnt
+    FROM silver.silver_call_events
+    WHERE duration_sec < talk_time_sec;
+
+    INSERT INTO silver.silver_data_quality_log
+    VALUES (clock_timestamp(), 'DURATION_LT_TALK', v_cnt, 'WARNING',
+            CASE WHEN v_cnt = 0 THEN 'PASS' ELSE 'FAIL' END);
+
+    -- 5. Answered without pickup (WARNING)
+    SELECT COUNT(*) INTO v_cnt
+    FROM silver.silver_call_events
+    WHERE answered_flag = TRUE AND pickup_ts IS NULL;
+
+    INSERT INTO silver.silver_data_quality_log
+    VALUES (clock_timestamp(), 'ANSWERED_NO_PICKUP', v_cnt, 'WARNING',
+            CASE WHEN v_cnt = 0 THEN 'PASS' ELSE 'FAIL' END);
+
+END;
+$$;
+
+CALL silver.run_silver_dq_checks();
+
+SELECT *
+FROM silver.silver_data_quality_log
+ORDER BY dq_run_ts DESC;
