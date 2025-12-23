@@ -1,0 +1,116 @@
+/*
+===============================================================================
+DDL Script : Create Gold Fact Table (Call Summary)
+Schema     : gold
+Database   : PostgreSQL
+===============================================================================
+Script Purpose:
+    This script creates the Gold-layer fact table summarizing call activity.
+
+Grain:
+    One row per CALL (natural key = call_natural_key)
+
+Design Principles:
+    - Star schema compliant
+    - Surrogate keys for dimensions
+    - Incremental & historical
+    - Callback indicators stored at fact level
+    - Optimized for analytics & BI
+
+Re-runnable:
+    YES (DROP + CREATE)
+
+===============================================================================
+*/
+
+-- ============================================================================
+-- Fact Table: Call Summary
+-- ============================================================================
+DROP TABLE IF EXISTS gold.fact_call_summary CASCADE;
+
+CREATE TABLE gold.fact_call_summary (
+
+    -- Surrogate key
+    fact_id BIGSERIAL PRIMARY KEY,
+
+    -- Business natural key (from Silver)
+    call_natural_key TEXT NOT NULL UNIQUE,
+
+    -- Dimension foreign keys
+    date_key INT NOT NULL
+        REFERENCES gold.dim_date(date_key),
+
+    caller_key BIGINT NOT NULL
+        REFERENCES gold.dim_caller(caller_key),
+
+    agent_key BIGINT
+        REFERENCES gold.dim_agent(agent_key),
+
+    campaign_key BIGINT
+        REFERENCES gold.dim_campaign(campaign_key),
+
+	 call_key BIGINT
+        REFERENCES gold.dim_call_id(call_key),
+
+	-- Denormalized Date Attributes (from dim_date)
+    full_date DATE NOT NULL,
+    day_name  TEXT NOT NULL,
+	month_name TEXT NOT NULL,
+
+    -- Call classification
+    call_type TEXT,
+
+    -- Outcome flags
+    answered_flag BOOLEAN NOT NULL,
+    missed_flag BOOLEAN NOT NULL,
+
+    -- Callback indicators
+    same_day_callback_flag BOOLEAN DEFAULT FALSE,
+    next_day_callback_flag BOOLEAN DEFAULT FALSE,
+
+    -- Metrics (seconds)
+    total_queue_time_sec INT,
+    total_talk_time_sec INT,
+    total_duration_sec INT,
+
+    -- Important timestamps
+    first_attempt_ts TIMESTAMP,
+    answered_ts TIMESTAMP,
+
+    -- Metadata
+    ingestion_ts TIMESTAMP NOT NULL DEFAULT clock_timestamp()
+);
+
+-- ============================================================================
+-- Performance Indexes (BI / Analytics)
+-- ============================================================================
+CREATE INDEX ix_fact_call_summary_date
+ON gold.fact_call_summary (date_key);
+
+CREATE INDEX ix_fact_call_summary_full_date
+ON gold.fact_call_summary (full_date);
+
+
+CREATE INDEX ix_fact_call_summary_day_name
+ON gold.fact_call_summary (day_name);
+
+CREATE INDEX ix_fact_call_summary_caller
+ON gold.fact_call_summary (caller_key);
+
+CREATE INDEX ix_fact_call_summary_agent
+ON gold.fact_call_summary (agent_key);
+
+CREATE INDEX ix_fact_call_summary_campaign
+ON gold.fact_call_summary (campaign_key);
+
+CREATE INDEX ix_fact_call_summary_call
+ON gold.fact_call_summary (call_key);
+
+CREATE INDEX ix_fact_call_summary_answered
+ON gold.fact_call_summary (answered_flag);
+
+-- ============================================================================
+-- Validation
+-- ============================================================================
+SELECT COUNT(*) FROM gold.fact_call_summary;
+SELECT * FROM gold.fact_call_summary;
