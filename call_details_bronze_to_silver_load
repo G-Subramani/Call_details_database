@@ -176,8 +176,16 @@ BEGIN
         b.hangup_by,
 
         -- Flags
-        COALESCE(b.status = 'Answered') AS answered_flag,
-        NOT COALESCE(b.status <> 'Answered') AS missed_flag,
+		CASE
+		  WHEN b.status IS NULL THEN NULL
+		  ELSE b.status = 'Answered'
+		END AS answered_flag,
+
+		CASE
+		  WHEN b.status IS NULL THEN NULL
+		  ELSE b.status <> 'Answered'
+		END AS missed_flag,
+        
 
         b.ingestion_ts,
         b.source_file_name
@@ -247,4 +255,15 @@ LIMIT 10;
 SELECT * FROM silver.silver_call_events 
 WHERE caller_country='INTERNATIONAL'
 LIMIT 10;
-SELECT COUNT(*) FROM silver.silver_call_events;
+
+SELECT COUNT(DISTINCT(call_id)) 
+FROM silver.silver_call_events 
+WHERE call_date BETWEEN '2025-01-01' AND '2025-01-31' 
+AND answered_flag=TRUE
+AND call_type='Inbound';
+
+SELECT COUNT(DISTINCT(call_id)) 
+FROM silver.silver_call_events 
+WHERE call_date BETWEEN '2025-01-01' AND '2025-01-31' 
+AND missed_flag=TRUE
+AND call_type='Inbound';
