@@ -1,0 +1,245 @@
+/*
+===============================================================================
+Procedure Name : bronze.load_bronze_call_events
+Schema         : bronze
+Database       : PostgreSQL
+===============================================================================
+Purpose:
+    Loads call event data from CSV into Bronze layer.
+
+Process:
+    1. Truncate staging table
+    2. COPY CSV into staging
+    3. Insert into final bronze table with de-duplication
+    4. Log execution timings
+    5. Fail safely with error details
+
+Notes:
+    - Uses COPY (PostgreSQL native)
+    - Uses ON CONFLICT DO NOTHING for idempotency
+    - Designed for daily / monthly reruns
+
+Usage:
+    CALL bronze.load_bronze_call_events();
+
+===============================================================================
+*/
+
+CREATE OR REPLACE PROCEDURE bronze.load_bronze_call_events()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_batch_start_time TIMESTAMP;
+    v_batch_end_time   TIMESTAMP;
+    v_step_start_time  TIMESTAMP;
+    v_step_end_time    TIMESTAMP;
+    v_row_count        BIGINT;
+BEGIN
+    ---------------------------------------------------------------------------
+    -- Batch start
+    ---------------------------------------------------------------------------
+    v_batch_start_time := clock_timestamp();
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Starting Bronze Load : Call Events';
+    RAISE NOTICE 'Start Time : %', v_batch_start_time;
+    RAISE NOTICE '================================================';
+
+    ---------------------------------------------------------------------------
+    -- Step 1: Truncate staging table
+    ---------------------------------------------------------------------------
+    v_step_start_time := clock_timestamp();
+    RAISE NOTICE '>> Truncating table: bronze.bronze_call_events_stg';
+
+    TRUNCATE TABLE bronze.bronze_call_events_stg;
+
+    v_step_end_time := clock_timestamp();
+    RAISE NOTICE '>> Completed in % seconds',
+        EXTRACT(EPOCH FROM (v_step_end_time - v_step_start_time));
+
+    ---------------------------------------------------------------------------
+    -- Step 2: Load CSV into staging
+    ---------------------------------------------------------------------------
+    v_step_start_time := clock_timestamp();
+    RAISE NOTICE '>> Loading CSV into staging table';
+
+    SET datestyle = 'DMY';
+
+    COPY bronze.bronze_call_events_stg (
+        ucid,
+        call_id,
+        call_type,
+        campaign,
+        skill,
+        location_,
+        caller_no,
+        caller_e164,
+        call_date,
+        queue_time,
+        start_time,
+        pickup_time,
+        time_to_answer,
+        hold_time,
+        end_time,
+        talk_time,
+        duration,
+        call_event,
+        dialed_number,
+        agent,
+        status,
+        dial_status,
+        customer_dial_status,
+        agent_dial_status,
+        wrapup_start_time,
+        wrapup_end_time,
+        disposition,
+        dialout_name,
+        transfer_type,
+        transferred_to,
+        hangup_by,
+        uui,
+        comments_,
+        customer_ring_time,
+        recording_url,
+        agent_id,
+        ratings,
+        rating_comments,
+        dynamic_did,
+        did
+    )
+    FROM 'E:/Call_Generate_data/CallDump_Jan_2025.csv'
+    WITH (
+        FORMAT csv,
+        HEADER true,
+        DELIMITER ',',
+        NULL ''
+    );
+
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+
+    v_step_end_time := clock_timestamp();
+    RAISE NOTICE '>> Rows loaded into staging: %', v_row_count;
+    RAISE NOTICE '>> Completed in % seconds',
+        EXTRACT(EPOCH FROM (v_step_end_time - v_step_start_time));
+
+    ---------------------------------------------------------------------------
+    -- Step 3: Insert into bronze final table (de-duplicated)
+    ---------------------------------------------------------------------------
+    v_step_start_time := clock_timestamp();
+    RAISE NOTICE '>> Inserting data into bronze.bronze_call_events';
+
+    INSERT INTO bronze.bronze_call_events (
+        ucid,
+        call_id,
+        call_type,
+        campaign,
+        skill,
+        location_,
+        caller_no,
+        caller_e164,
+        call_date,
+        queue_time,
+        start_time,
+        pickup_time,
+        time_to_answer,
+        hold_time,
+        end_time,
+        talk_time,
+        duration,
+        call_event,
+        dialed_number,
+        agent,
+        status,
+        dial_status,
+        customer_dial_status,
+        agent_dial_status,
+        wrapup_start_time,
+        wrapup_end_time,
+        disposition,
+        dialout_name,
+        transfer_type,
+        transferred_to,
+        hangup_by,
+        uui,
+        comments_,
+        customer_ring_time,
+        recording_url,
+        agent_id,
+        ratings,
+        rating_comments,
+        dynamic_did,
+        did,
+        source_file_name
+    )
+    SELECT
+        s.ucid,
+        s.call_id,
+        s.call_type,
+        s.campaign,
+        s.skill,
+        s.location_,
+        s.caller_no,
+        s.caller_e164,
+        s.call_date,
+        s.queue_time,
+        s.start_time,
+        s.pickup_time,
+        s.time_to_answer,
+        s.hold_time,
+        s.end_time,
+        s.talk_time,
+        s.duration,
+        s.call_event,
+        s.dialed_number,
+        s.agent,
+        s.status,
+        s.dial_status,
+        s.customer_dial_status,
+        s.agent_dial_status,
+        s.wrapup_start_time,
+        s.wrapup_end_time,
+        s.disposition,
+        s.dialout_name,
+        s.transfer_type,
+        s.transferred_to,
+        s.hangup_by,
+        s.uui,
+        s.comments_,
+        s.customer_ring_time,
+        s.recording_url,
+        s.agent_id,
+        s.ratings,
+        s.rating_comments,
+        s.dynamic_did,
+        s.did,
+        'CallDump_Jan_2025.csv' AS source_file_name
+    FROM bronze.bronze_call_events_stg s
+    ON CONFLICT (ucid, caller_no, call_date, start_time)
+    DO NOTHING;
+
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+
+    v_step_end_time := clock_timestamp();
+    RAISE NOTICE '>> Rows inserted into bronze: %', v_row_count;
+    RAISE NOTICE '>> Completed in % seconds',
+        EXTRACT(EPOCH FROM (v_step_end_time - v_step_start_time));
+
+    ---------------------------------------------------------------------------
+    -- Batch end
+    ---------------------------------------------------------------------------
+    v_batch_end_time := clock_timestamp();
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Bronze Load Completed Successfully';
+    RAISE NOTICE 'Total Duration : % seconds',
+        EXTRACT(EPOCH FROM (v_batch_end_time - v_batch_start_time));
+    RAISE NOTICE '================================================';
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE '================================================';
+        RAISE NOTICE 'ERROR DURING BRONZE LOAD';
+        RAISE NOTICE 'SQLSTATE : %', SQLSTATE;
+        RAISE NOTICE 'MESSAGE  : %', SQLERRM;
+        RAISE NOTICE '================================================';
+        RAISE;
+END;
+$$;
