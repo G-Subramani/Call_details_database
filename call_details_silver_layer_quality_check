@@ -1,3 +1,12 @@
+--answered and missed distribution
+
+SELECT
+    answered_flag,
+    missed_flag,
+    COUNT(*)
+FROM silver.silver_call_events
+GROUP BY 1, 2;
+
 -- Natural key must never be NULL
 SELECT COUNT(*) AS null_natural_key_count
 FROM silver.silver_call_events
@@ -159,3 +168,7 @@ CALL silver.run_silver_dq_checks();
 SELECT *
 FROM silver.silver_data_quality_log
 ORDER BY dq_run_ts DESC;
+
+SELECT * 
+ FROM silver.silver_call_events
+    WHERE answered_flag = TRUE AND pickup_ts IS NULL;
