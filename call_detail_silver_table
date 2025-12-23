@@ -1,0 +1,113 @@
+/*
+===============================================================================
+DDL Script : Create Silver Tables (Call Events)
+Schema     : silver
+Database   : PostgreSQL
+===============================================================================
+Script Purpose:
+    This script creates Silver layer tables for Call Events data.
+
+Design Principles:
+    - Silver = Cleaned, standardized, enriched data
+    - Incremental loads (history preserved)
+    - One record per call event
+    - Business natural key enforced
+    - Ready for Gold aggregations & analytics
+
+Re-runnable:
+    YES (safe DROP + CREATE)
+
+===============================================================================
+*/
+
+-- ============================================================================
+-- Schema
+-- ============================================================================
+CREATE SCHEMA IF NOT EXISTS silver;
+
+-- ============================================================================
+-- Final Silver Table (Incremental + Historical)
+-- ============================================================================
+DROP TABLE IF EXISTS silver.silver_call_events CASCADE;
+
+CREATE TABLE silver.silver_call_events (
+
+    -- Surrogate Key
+    silver_id BIGSERIAL PRIMARY KEY,
+
+    -- Business Natural Key (Derived)
+    call_natural_key TEXT NOT NULL,
+
+    -- Source Identifiers
+    ucid TEXT,
+    call_id TEXT,
+
+    -- Caller (Standardized)
+    caller_no_clean TEXT,
+    caller_country TEXT,
+
+    -- Call Classification
+    call_type TEXT,
+    campaign TEXT,
+    skill TEXT,
+    location_ TEXT,
+    agent TEXT,
+    agent_id TEXT,
+
+    -- Dates & Timestamps (Parsed)
+    call_date DATE,
+    start_ts TIMESTAMP,
+    pickup_ts TIMESTAMP,
+    end_ts TIMESTAMP,
+    wrapup_start_ts TIMESTAMP,
+    wrapup_end_ts TIMESTAMP,
+
+    -- Durations (Standardized: seconds)
+    queue_time_sec INT,
+    time_to_answer_sec INT,
+    hold_time_sec INT,
+    talk_time_sec INT,
+    duration_sec INT,
+    customer_ring_time_sec INT,
+
+    -- Status & Outcome
+    status TEXT,
+    call_event TEXT,
+    disposition TEXT,
+    hangup_by TEXT,
+
+    -- Event Classification Flags
+    answered_flag BOOLEAN,
+    missed_flag BOOLEAN,
+
+    -- Metadata (Lineage & Auditing)
+    ingestion_ts TIMESTAMP NOT NULL DEFAULT clock_timestamp(),
+    source_file_name TEXT NOT NULL
+);
+
+-- ============================================================================
+-- Business Key Constraint (Idempotent Loads)
+-- ============================================================================
+CREATE UNIQUE INDEX ux_silver_call_events_natural_key
+ON silver.silver_call_events (call_natural_key);
+
+-- ============================================================================
+-- Performance Indexes (Gold Layer Friendly)
+-- ============================================================================
+CREATE INDEX ix_silver_call_events_call_date
+ON silver.silver_call_events (call_date);
+
+CREATE INDEX ix_silver_call_events_caller
+ON silver.silver_call_events (caller_no_clean);
+
+CREATE INDEX ix_silver_call_events_answered
+ON silver.silver_call_events (answered_flag);
+
+-- ============================================================================
+-- Validation
+-- ============================================================================
+SELECT current_database();
+
+SELECT *
+FROM silver.silver_call_events
+LIMIT 10;
