@@ -1,0 +1,10 @@
+--=============================================================================
+--Medallion architecture for call data(postgresql)
+--Creating schemas for database.
+--Update with callback flags
+--Unique Key: UCID+Caller_No+Call_Date+Start_Time
+--=============================================================================
+
+CREATE SCHEMA IF NOT EXISTS bronze;
+CREATE SCHEMA IF NOT EXISTS silver;	
+CREATE SCHEMA IF NOT EXISTS gold;
