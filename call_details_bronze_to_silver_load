@@ -1,0 +1,250 @@
+/*
+===============================================================================
+Procedure Name : silver.load_silver_call_events
+Schema         : silver
+Database       : PostgreSQL
+===============================================================================
+Purpose:
+    Transforms Bronze call events into clean, enriched Silver call events.
+
+Process:
+    1. Generate business natural key
+    2. Clean & standardize caller numbers
+    3. Parse timestamps
+    4. Convert durations to seconds
+    5. Derive answered / missed flags
+    6. Insert incrementally (history preserved)
+    7. Capture audit metrics
+
+Global Phone Rules:
+    - Strip non-digits
+    - Valid length: 7–15 digits (E.164)
+    - Invalid numbers retained but labelled INVALID
+
+Design:
+    - Incremental (append-only)
+    - Idempotent via natural key
+    - Silver = curated, typed, analytics-ready
+
+Usage:
+    CALL silver.load_silver_call_events();
+
+===============================================================================
+*/
+
+CREATE OR REPLACE PROCEDURE silver.load_silver_call_events()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_start_time      TIMESTAMP;
+    v_end_time        TIMESTAMP;
+    v_bronze_rows     INT;
+    v_silver_inserted INT;
+BEGIN
+    ---------------------------------------------------------------------------
+    -- Start
+    ---------------------------------------------------------------------------
+    v_start_time := clock_timestamp();
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Starting Silver Load : Call Events';
+    RAISE NOTICE 'Start Time : %', v_start_time;
+    RAISE NOTICE '================================================';
+
+    ---------------------------------------------------------------------------
+    -- Bronze row count (for audit)
+    ---------------------------------------------------------------------------
+    SELECT COUNT(*) INTO v_bronze_rows
+    FROM bronze.bronze_call_events;
+
+    ---------------------------------------------------------------------------
+    -- Insert into Silver (Incremental)
+    ---------------------------------------------------------------------------
+    INSERT INTO silver.silver_call_events (
+        call_natural_key,
+        ucid,
+        call_id,
+        caller_no_clean,
+        caller_country,
+        call_type,
+        campaign,
+        skill,
+        location_,
+        agent,
+        agent_id,
+        call_date,
+        start_ts,
+        pickup_ts,
+        end_ts,
+        wrapup_start_ts,
+        wrapup_end_ts,
+        queue_time_sec,
+        time_to_answer_sec,
+        hold_time_sec,
+        talk_time_sec,
+        duration_sec,
+        customer_ring_time_sec,
+        status,
+        call_event,
+        disposition,
+        hangup_by,
+        answered_flag,
+        missed_flag,
+        ingestion_ts,
+        source_file_name
+    )
+    SELECT
+        -- Natural Key
+        CONCAT_WS('|',
+            TRIM(b.ucid),
+            TRIM(b.caller_no),
+            b.call_date::TEXT,
+            TRIM(b.start_time)
+        ) AS call_natural_key,
+
+        TRIM(b.ucid),
+        TRIM(b.call_id),
+
+        -----------------------------------------------------------------------
+        -- GLOBAL PHONE NORMALIZATION
+        -----------------------------------------------------------------------
+        CASE
+            -- VALID INDIAN (10 digits starting 6-9, optional 91)
+            WHEN phone_digits ~ '^(91)?[6-9][0-9]{9}$'
+                THEN RIGHT(phone_digits, 10)
+
+            -- VALID INTERNATIONAL (7–15 digits, non-India)
+            WHEN LENGTH(phone_digits) BETWEEN 7 AND 15
+                THEN phone_digits
+				
+			 -- INVALID
+            ELSE 'INVALID'
+        END AS caller_no_clean,
+
+        ---------------------------------------------------------------------------
+        -- COUNTRY LABEL
+        -----------------------------------------------------------------------
+        CASE
+            WHEN phone_digits ~ '^(91)?[6-9][0-9]{9}$'
+                THEN 'INDIA'
+            WHEN LENGTH(phone_digits) BETWEEN 7 AND 15
+                THEN 'INTERNATIONAL'
+            ELSE 'INVALID'
+        END AS caller_country,
+
+        b.call_type,
+        b.campaign,
+        b.skill,
+        b.location_,
+        b.agent,
+        b.agent_id,
+        b.call_date,
+
+        -- Timestamps
+        (b.call_date || ' ' || b.start_time)::TIMESTAMP AS start_ts,
+
+        CASE
+            WHEN COALESCE(b.pickup_time, '') <> ''
+                THEN (b.call_date || ' ' || b.pickup_time)::TIMESTAMP
+            ELSE NULL
+        END AS pickup_ts,
+
+        (b.call_date || ' ' || b.end_time)::TIMESTAMP AS end_ts,
+
+        CASE
+            WHEN COALESCE(b.wrapup_start_time, '') <> ''
+                THEN (b.call_date || ' ' || b.wrapup_start_time)::TIMESTAMP
+            ELSE NULL
+        END AS wrapup_start_ts,
+
+        CASE
+            WHEN COALESCE(b.wrapup_end_time, '') <> ''
+                THEN (b.call_date || ' ' || b.wrapup_end_time)::TIMESTAMP
+            ELSE NULL
+        END AS wrapup_end_ts,
+
+        -- Durations → seconds
+        EXTRACT(EPOCH FROM b.queue_time::INTERVAL)::INT,
+        EXTRACT(EPOCH FROM b.time_to_answer::INTERVAL)::INT,
+        EXTRACT(EPOCH FROM b.hold_time::INTERVAL)::INT,
+        EXTRACT(EPOCH FROM b.talk_time::INTERVAL)::INT,
+        EXTRACT(EPOCH FROM b.duration::INTERVAL)::INT,
+        EXTRACT(EPOCH FROM b.customer_ring_time::INTERVAL)::INT,
+
+        b.status,
+        b.call_event,
+        b.disposition,
+        b.hangup_by,
+
+        -- Flags
+        COALESCE(b.status = 'Answered') AS answered_flag,
+        NOT COALESCE(b.status <> 'Answered') AS missed_flag,
+
+        b.ingestion_ts,
+        b.source_file_name
+
+     FROM (
+        SELECT
+            *,
+            REGEXP_REPLACE(COALESCE(caller_no,''), '[^0-9]', '', 'g') AS phone_digits
+        FROM bronze.bronze_call_events
+    ) b
+
+    ON CONFLICT (call_natural_key) DO NOTHING;
+
+    GET DIAGNOSTICS v_silver_inserted = ROW_COUNT;
+
+    ---------------------------------------------------------------------------
+    -- Audit log (file-level can be extended later)
+    ---------------------------------------------------------------------------
+    INSERT INTO silver.load_audit (
+        file_name,
+        bronze_rows,
+        silver_rows,
+        load_ts
+    )
+    SELECT
+        source_file_name,
+        v_bronze_rows,
+        v_silver_inserted,
+        clock_timestamp()
+    FROM (
+        SELECT DISTINCT source_file_name
+        FROM bronze.bronze_call_events
+    ) f
+    ON CONFLICT (file_name) DO NOTHING;
+
+    ---------------------------------------------------------------------------
+    -- End
+    ---------------------------------------------------------------------------
+    v_end_time := clock_timestamp();
+
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Silver Load Completed Successfully';
+    RAISE NOTICE 'Bronze Rows       : %', v_bronze_rows;
+    RAISE NOTICE 'Silver Rows Added : %', v_silver_inserted;
+    RAISE NOTICE 'Total Duration    : % seconds',
+        EXTRACT(EPOCH FROM (v_end_time - v_start_time));
+    RAISE NOTICE '================================================';
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE '================================================';
+        RAISE NOTICE 'ERROR DURING SILVER LOAD';
+        RAISE NOTICE 'SQLSTATE : %', SQLSTATE;
+        RAISE NOTICE 'MESSAGE  : %', SQLERRM;
+        RAISE NOTICE '================================================';
+        RAISE;
+END;
+$$;
+
+--bronze to silver call procedure
+CALL silver.load_silver_call_events();
+
+SELECT * FROM silver.silver_call_events 
+ORDER BY call_date DESC
+LIMIT 10;
+
+SELECT * FROM silver.silver_call_events 
+WHERE caller_country='INTERNATIONAL'
+LIMIT 10;
+SELECT COUNT(*) FROM silver.silver_call_events;
