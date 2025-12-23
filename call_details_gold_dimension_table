@@ -1,0 +1,111 @@
+/*
+===============================================================================
+DDL Script : Create Gold Dimension Tables (Call Analytics)
+Schema     : gold
+Database   : PostgreSQL
+===============================================================================
+Script Purpose:
+    This script creates Gold-layer dimension tables for Call Analytics.
+
+Design Principles:
+    - Gold = Conformed dimensions
+    - Surrogate keys for joins
+    - Business keys enforced via UNIQUE constraints
+    - Optimized for fact table joins
+
+Re-runnable:
+    YES (DROP + CREATE)
+	
+
+===============================================================================
+*/
+
+-- ============================================================================
+-- Schema
+-- ============================================================================
+CREATE SCHEMA IF NOT EXISTS gold;
+
+-- ============================================================================
+-- Dimension: Date
+-- ============================================================================
+DROP TABLE IF EXISTS gold.dim_date CASCADE;
+
+CREATE TABLE gold.dim_date (
+    date_key INT PRIMARY KEY,       -- YYYYMMDD
+    full_date DATE UNIQUE NOT NULL,
+    day INT NOT NULL,
+    day_name TEXT NOT NULL,
+    month INT NOT NULL,
+    month_name TEXT NOT NULL,
+    quarter INT NOT NULL,
+    year INT NOT NULL,
+    week_of_year INT NOT NULL,
+    is_weekend BOOLEAN NOT NULL
+);
+
+-- ============================================================================
+-- Dimension: Caller
+-- ============================================================================
+DROP TABLE IF EXISTS gold.dim_caller CASCADE;
+
+CREATE TABLE gold.dim_caller (
+    caller_key BIGSERIAL PRIMARY KEY,
+    caller_no_clean TEXT NOT NULL UNIQUE,
+    caller_country TEXT NOT NULL
+);
+
+-- ============================================================================
+-- Dimension: Agent
+-- ============================================================================
+DROP TABLE IF EXISTS gold.dim_agent CASCADE;
+
+CREATE TABLE gold.dim_agent (
+    agent_key BIGSERIAL PRIMARY KEY,
+    agent_name TEXT,
+    agent_id TEXT UNIQUE
+);
+
+-- ============================================================================
+-- Dimension: Campaign / Skill / Location
+-- ============================================================================
+DROP TABLE IF EXISTS gold.dim_campaign CASCADE;
+
+CREATE TABLE gold.dim_campaign (
+    campaign_key BIGSERIAL PRIMARY KEY,
+    campaign TEXT NOT NULL,
+    skill TEXT,
+    location_ TEXT,
+    UNIQUE (campaign, skill, location_)
+);
+/*
+===============================================================================
+Purpose:
+    Stores unique call_id values for call-level analysis.
+
+Grain:
+    One row per call_id
+Dimension:call_id
+===============================================================================
+*/
+
+DROP TABLE IF EXISTS gold.dim_call_id CASCADE;
+
+CREATE TABLE gold.dim_call_id (
+    call_key BIGSERIAL PRIMARY KEY,
+    call_id TEXT NOT NULL UNIQUE
+);
+
+-- ============================================================================
+-- Validation
+-- ============================================================================
+SELECT current_database();
+
+SELECT 'dim_date'     AS table_name, COUNT(*) FROM gold.dim_date
+UNION ALL
+SELECT 'dim_caller',  COUNT(*) FROM gold.dim_caller
+UNION ALL
+SELECT 'dim_agent',   COUNT(*) FROM gold.dim_agent
+UNION ALL
+SELECT 'dim_campaign', COUNT(*) FROM gold.dim_campaign
+UNION ALL
+SELECT 'dim_call_id', COUNT(*) FROM gold.dim_call_id;
