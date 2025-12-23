@@ -1,0 +1,171 @@
+/*
+===============================================================================
+Procedure Name : gold.load_gold_dimensions
+Schema         : gold
+Database       : PostgreSQL
+===============================================================================
+Purpose:
+    Loads Gold dimension tables from Silver layer.
+
+Dimensions Loaded:
+    - dim_date
+    - dim_caller
+    - dim_agent
+    - dim_campaign
+	- dim_call_id
+Design Principles:
+    - Incremental (append-only)
+    - Idempotent via ON CONFLICT
+    - Conformed dimensions
+    - Safe for re-runs
+
+Usage:
+    CALL gold.load_gold_dimensions();
+
+===============================================================================
+*/
+
+CREATE OR REPLACE PROCEDURE gold.load_gold_dimensions()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_start_ts TIMESTAMP;
+    v_end_ts   TIMESTAMP;
+BEGIN
+    v_start_ts := clock_timestamp();
+
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Starting Gold Dimension Load';
+    RAISE NOTICE '================================================';
+
+    ---------------------------------------------------------------------------
+    -- dim_date (static calendar)
+    ---------------------------------------------------------------------------
+    RAISE NOTICE 'Loading dim_date';
+
+    INSERT INTO gold.dim_date (
+        date_key,
+        full_date,
+        day,
+        day_name,
+        month,
+        month_name,
+        quarter,
+        year,
+        week_of_year,
+        is_weekend
+    )
+    SELECT
+        (EXTRACT(YEAR FROM d)::INT * 10000 +
+         EXTRACT(MONTH FROM d)::INT * 100 +
+         EXTRACT(DAY FROM d)::INT)        AS date_key,
+        d                                 AS full_date,
+        EXTRACT(DAY FROM d)::INT          AS day,
+        TRIM(TO_CHAR(d, 'Dy'))            AS day_name,
+        EXTRACT(MONTH FROM d)::INT        AS month,
+        TRIM(TO_CHAR(d, 'Mon'))           AS month_name,
+        EXTRACT(QUARTER FROM d)::INT      AS quarter,
+        EXTRACT(YEAR FROM d)::INT         AS year,
+        EXTRACT(WEEK FROM d)::INT         AS week_of_year,
+        (EXTRACT(ISODOW FROM d) >= 6)     AS is_weekend
+    FROM generate_series(
+        DATE '2000-01-01',
+        DATE '2030-12-31',
+        INTERVAL '1 day'
+    ) AS d
+    ON CONFLICT (date_key) DO NOTHING;
+
+    ---------------------------------------------------------------------------
+    -- dim_caller
+    ---------------------------------------------------------------------------
+    RAISE NOTICE 'Loading dim_caller';
+
+    INSERT INTO gold.dim_caller (
+        caller_no_clean,
+        caller_country
+    )
+    SELECT DISTINCT
+        caller_no_clean,
+        caller_country
+    FROM silver.silver_call_events
+    WHERE caller_no_clean IS NOT NULL
+    ON CONFLICT (caller_no_clean) DO NOTHING;
+
+    ---------------------------------------------------------------------------
+    -- dim_agent
+    ---------------------------------------------------------------------------
+    RAISE NOTICE 'Loading dim_agent';
+
+    INSERT INTO gold.dim_agent (
+        agent_name,
+        agent_id
+    )
+    SELECT DISTINCT
+        agent,
+        agent_id
+    FROM silver.silver_call_events
+    WHERE agent_id IS NOT NULL
+    ON CONFLICT (agent_id) DO NOTHING;
+
+    ---------------------------------------------------------------------------
+    -- dim_campaign
+    ---------------------------------------------------------------------------
+    RAISE NOTICE 'Loading dim_campaign';
+
+    INSERT INTO gold.dim_campaign (
+        campaign,
+        skill,
+        location_
+    )
+    SELECT DISTINCT
+        campaign,
+        skill,
+        location_
+    FROM silver.silver_call_events
+    WHERE campaign IS NOT NULL
+    ON CONFLICT DO NOTHING;
+ 	---------------------------------------------------------------------------
+    -- dim_call_id (NEW)
+    ---------------------------------------------------------------------------
+    RAISE NOTICE 'Loading dim_call_id';
+
+    INSERT INTO gold.dim_call_id (
+        call_id
+    )
+    SELECT DISTINCT
+        call_id
+    FROM silver.silver_call_events
+    WHERE call_id IS NOT NULL
+    ON CONFLICT (call_id) DO NOTHING;
+    ---------------------------------------------------------------------------
+    -- End
+    ---------------------------------------------------------------------------
+    v_end_ts := clock_timestamp();
+
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Gold Dimension Load Completed';
+    RAISE NOTICE 'Duration: % seconds',
+        EXTRACT(EPOCH FROM (v_end_ts - v_start_ts));
+    RAISE NOTICE '================================================';
+
+END;
+$$;
+
+CALL gold.load_gold_dimensions();
+
+SELECT 'dim_date'     AS table_name, COUNT(*) FROM gold.dim_date
+UNION ALL
+SELECT 'dim_caller',  COUNT(*) FROM gold.dim_caller
+UNION ALL
+SELECT 'dim_agent',   COUNT(*) FROM gold.dim_agent
+UNION ALL
+SELECT 'dim_campaign',COUNT(*) FROM gold.dim_campaign
+UNION ALL
+SELECT 'dim_call_id',  COUNT(*) FROM gold.dim_call_id;
+
+
+
+
+
+
+
