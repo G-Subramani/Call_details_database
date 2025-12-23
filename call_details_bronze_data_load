@@ -243,3 +243,10 @@ EXCEPTION
         RAISE;
 END;
 $$;
+
+--Procedure call
+CALL bronze.load_bronze_call_events();
+
+--validation
+
+SELECT COUNT(*) FROM bronze.bronze_call_events;
