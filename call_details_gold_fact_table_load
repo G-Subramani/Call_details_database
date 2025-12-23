@@ -1,0 +1,199 @@
+/*
+===============================================================================
+Procedure Name : gold.load_fact_call_summary
+Schema         : gold
+Database       : PostgreSQL
+===============================================================================
+Purpose:
+    Loads the Gold fact table `fact_call_summary` from Silver layer data.
+
+Grain:
+    One row per call (call_natural_key)
+
+Logic Included:
+    - Same-day callback detection
+    - Next-day callback detection
+    - Dimension key resolution
+    - Incremental load with history preservation
+
+Design Principles:
+    - Star schema compliant
+    - Incremental & idempotent
+    - Business logic only in Gold
+    - Safe for re-runs
+
+Usage:
+    CALL gold.load_fact_call_summary();
+
+===============================================================================
+*/
+
+CREATE OR REPLACE PROCEDURE gold.load_fact_call_summary()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_start_ts TIMESTAMP;
+    v_end_ts   TIMESTAMP;
+    v_rows     INT;
+BEGIN
+    v_start_ts := clock_timestamp();
+
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Starting Gold Fact Load : fact_call_summary';
+    RAISE NOTICE '================================================';
+
+    ---------------------------------------------------------------------------
+    -- Callback logic (same-day / next-day)
+    ---------------------------------------------------------------------------
+    WITH answered_calls AS (
+        SELECT
+            caller_no_clean,
+            call_date,
+            MIN(start_ts) AS first_answered_ts
+        FROM silver.silver_call_events
+        WHERE answered_flag = TRUE
+        GROUP BY caller_no_clean, call_date
+    ),
+    missed_with_callbacks AS (
+        SELECT
+            m.call_natural_key,
+
+            /* Same-day callback */
+            (
+                a_same.first_answered_ts IS NOT NULL
+                AND a_same.first_answered_ts > m.start_ts
+            ) AS same_day_callback_flag,
+
+            /* Next-day callback */
+            (
+                a_next.first_answered_ts IS NOT NULL
+            ) AS next_day_callback_flag
+
+        FROM silver.silver_call_events m
+
+        LEFT JOIN answered_calls a_same
+            ON a_same.caller_no_clean = m.caller_no_clean
+           AND a_same.call_date = m.call_date
+
+        LEFT JOIN answered_calls a_next
+            ON a_next.caller_no_clean = m.caller_no_clean
+           AND a_next.call_date = m.call_date + 1
+
+        WHERE m.answered_flag = FALSE
+    )
+
+    ---------------------------------------------------------------------------
+    -- Insert into Gold fact table
+    ---------------------------------------------------------------------------
+    INSERT INTO gold.fact_call_summary (
+
+        call_natural_key,
+        date_key,
+        caller_key,
+        agent_key,
+        campaign_key,
+		call_key,
+
+ -- denormalized date attributes
+        full_date,
+        day_name,
+		month_name,
+		
+        call_type,
+        answered_flag,
+        missed_flag,
+
+        same_day_callback_flag,
+        next_day_callback_flag,
+
+        total_queue_time_sec,
+        total_talk_time_sec,
+        total_duration_sec,
+
+        first_attempt_ts,
+        answered_ts,
+        ingestion_ts
+    )
+    SELECT
+        s.call_natural_key,
+
+        d.date_key,
+        c.caller_key,
+        a.agent_key,
+        cp.campaign_key,
+		cid.call_key,
+
+		 -- from dim_date
+        d.full_date,
+        d.day_name,
+		d.month_name,
+
+        s.call_type,
+        COALESCE(s.answered_flag, FALSE) AS answered_flag,
+    	COALESCE(s.missed_flag, FALSE)  AS missed_flag,
+
+        COALESCE(mcb.same_day_callback_flag, FALSE),
+        COALESCE(mcb.next_day_callback_flag, FALSE),
+
+        s.queue_time_sec,
+        s.talk_time_sec,
+        s.duration_sec,
+
+        s.start_ts,
+        CASE
+            WHEN s.answered_flag THEN s.pickup_ts
+            ELSE NULL
+        END AS answered_ts,
+
+        clock_timestamp()
+
+    FROM silver.silver_call_events s
+
+    LEFT JOIN missed_with_callbacks mcb
+        ON mcb.call_natural_key = s.call_natural_key
+
+    -- Dimensions
+    JOIN gold.dim_date d
+        ON d.full_date = s.call_date
+
+    JOIN gold.dim_caller c
+        ON c.caller_no_clean = s.caller_no_clean
+
+    LEFT JOIN gold.dim_agent a
+        ON a.agent_id = s.agent_id
+
+    LEFT JOIN gold.dim_campaign cp
+        ON cp.campaign = s.campaign
+       AND cp.skill = s.skill
+       AND cp.location_ = s.location_
+
+	LEFT JOIN gold.dim_call_id cid
+        ON cid.call_id = s.call_id
+
+    ON CONFLICT (call_natural_key) DO NOTHING;
+
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+    v_end_ts := clock_timestamp();
+
+    RAISE NOTICE '================================================';
+    RAISE NOTICE 'Gold Fact Load Completed';
+    RAISE NOTICE 'Rows Inserted : %', v_rows;
+    RAISE NOTICE 'Duration      : % seconds',
+        EXTRACT(EPOCH FROM (v_end_ts - v_start_ts));
+    RAISE NOTICE '================================================';
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE '================================================';
+        RAISE NOTICE 'ERROR DURING GOLD FACT LOAD';
+        RAISE NOTICE 'SQLSTATE : %', SQLSTATE;
+        RAISE NOTICE 'MESSAGE  : %', SQLERRM;
+        RAISE NOTICE '================================================';
+        RAISE;
+END;
+$$;
+
+CALL gold.load_fact_call_summary();
+
+
