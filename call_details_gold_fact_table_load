@@ -45,42 +45,34 @@ BEGIN
     ---------------------------------------------------------------------------
     -- Callback logic (same-day / next-day)
     ---------------------------------------------------------------------------
-    WITH answered_calls AS (
-        SELECT
-            caller_no_clean,
-            call_date,
-            MIN(start_ts) AS first_answered_ts
-        FROM silver.silver_call_events
-        WHERE answered_flag = TRUE
-        GROUP BY caller_no_clean, call_date
-    ),
-    missed_with_callbacks AS (
-        SELECT
-            m.call_natural_key,
+  	WITH missed_with_callbacks AS (
+    SELECT
+        m.call_natural_key,
 
-            /* Same-day callback */
-            (
-                a_same.first_answered_ts IS NOT NULL
-                AND a_same.first_answered_ts > m.start_ts
-            ) AS same_day_callback_flag,
+        /* Same-day callback:
+           Any answered call AFTER this missed call, same day */
+        EXISTS (
+            SELECT 1
+            FROM silver.silver_call_events a
+            WHERE a.caller_no_clean = m.caller_no_clean
+              AND a.call_date = m.call_date
+              AND a.answered_flag = TRUE
+              AND a.start_ts > m.start_ts
+        ) AS same_day_callback_flag,
 
-            /* Next-day callback */
-            (
-                a_next.first_answered_ts IS NOT NULL
-            ) AS next_day_callback_flag
+        /* Next-day callback:
+           Any answered call next calendar day */
+        EXISTS (
+            SELECT 1
+            FROM silver.silver_call_events a
+            WHERE a.caller_no_clean = m.caller_no_clean
+              AND a.call_date = m.call_date + 1
+              AND a.answered_flag = TRUE
+        ) AS next_day_callback_flag
 
-        FROM silver.silver_call_events m
-
-        LEFT JOIN answered_calls a_same
-            ON a_same.caller_no_clean = m.caller_no_clean
-           AND a_same.call_date = m.call_date
-
-        LEFT JOIN answered_calls a_next
-            ON a_next.caller_no_clean = m.caller_no_clean
-           AND a_next.call_date = m.call_date + 1
-
-        WHERE m.answered_flag = FALSE
-    )
+    FROM silver.silver_call_events m
+    WHERE m.answered_flag = FALSE
+)
 
     ---------------------------------------------------------------------------
     -- Insert into Gold fact table
