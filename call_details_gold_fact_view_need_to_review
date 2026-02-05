@@ -1,0 +1,116 @@
+CREATE OR REPLACE VIEW gold.vw_inbound_calls_base AS
+SELECT
+    fact_id,
+    call_natural_key,
+    call_key,
+    caller_key,
+    agent_key,
+    campaign_key,
+
+    full_date,
+    day_name,
+    month_name,
+    to_char(full_date, 'Mon-YY') AS month,
+
+    answered_flag,
+    missed_flag,
+    same_day_callback_flag,
+    next_day_callback_flag,
+
+    -- Derived flags (used everywhere)
+    CASE
+        WHEN answered_flag = FALSE THEN 1 ELSE 0
+    END AS is_missed,
+
+    CASE
+        WHEN answered_flag = FALSE
+         AND (same_day_callback_flag = TRUE OR next_day_callback_flag = TRUE)
+        THEN 1 ELSE 0
+    END AS is_missed_reversion
+
+FROM gold.fact_call_summary
+WHERE call_type = 'Inbound';
+
+select * from gold.vw_inbound_calls_base limit 10;
+
+select coun* from gold.vw_inbound_calls_base;
+
+--call_details_gold_inbound_call_kpis_view
+
+ 
+--DASHBOARD 1 — TOTAL INBOUND CALL SUMMARY (CALL LEVEL)
+CREATE OR REPLACE VIEW gold.vw_inbound_call_kpis AS
+SELECT
+    month,
+
+    COUNT(DISTINCT call_key)                                  AS total_calls,
+    COUNT(DISTINCT call_key) FILTER (WHERE answered_flag)     AS answered_calls,
+
+    COUNT(DISTINCT call_key)
+      - COUNT(DISTINCT call_key) FILTER (WHERE answered_flag) AS not_answered_calls,
+
+    COUNT(DISTINCT call_key) FILTER (WHERE answered_flag=False is_missed_reversion = 1)
+                                                              AS missed_reversion_calls,
+
+    COUNT(DISTINCT agent_key) FILTER (WHERE agent_key IS NOT NULL)
+                                                              AS agents_count,
+
+    COUNT(DISTINCT full_date)                                 AS active_days
+
+FROM gold.vw_inbound_calls_base
+GROUP BY month;
+
+
+select * from gold.vw_inbound_call_kpis limit 10;
+
+--Caller-Level KPI View
+CREATE OR REPLACE VIEW gold.vw_inbound_unique_caller_kpis AS
+SELECT
+    month,
+
+    COUNT(DISTINCT caller_key) AS unique_total_calls,
+
+    COUNT(DISTINCT caller_key)
+        FILTER (WHERE ever_answered = 1) AS unique_answered_calls,
+
+    COUNT(DISTINCT caller_key)
+        FILTER (WHERE ever_answered = 0) AS unique_not_answered_calls,
+
+    COUNT(DISTINCT caller_key)
+        FILTER (WHERE ever_answered = 0 AND has_missed_reversion = 1)
+        AS unique_missed_reversion_calls
+
+FROM gold.vw_inbound_caller_summary
+GROUP BY month;
+
+select * from gold.vw_inbound_unique_caller_kpis limit 10;
+
+--call_details_caller_summary_view
+
+--UNIQUE TOTAL INBOUND CALL SUMMARY (CALLER LEVEL)
+CREATE OR REPLACE VIEW gold.vw_inbound_caller_summary AS
+SELECT
+    month,
+    caller_key,
+
+    COUNT(DISTINCT call_key) AS total_calls,
+
+    MAX(CASE WHEN answered_flag = TRUE THEN 1 ELSE 0 END)
+        AS ever_answered,
+
+    MAX(
+        CASE
+            WHEN answered_flag = FALSE
+             AND (same_day_callback_flag = TRUE OR next_day_callback_flag = TRUE)
+            THEN 1 ELSE 0
+        END
+    ) AS has_missed_reversion
+
+FROM gold.vw_inbound_calls_base
+GROUP BY month, caller_key;
+
+select * from gold.vw_inbound_caller_summary;
+
+
+
+
