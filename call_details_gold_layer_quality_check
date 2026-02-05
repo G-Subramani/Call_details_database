@@ -56,3 +56,15 @@ FROM gold.fact_call_summary f
 LEFT JOIN gold.dim_call_id d
   ON f.call_key = d.call_key
 WHERE d.call_key IS NULL;
+
+--for clearing the cashes 
+SELECT pid, state
+FROM pg_stat_activity
+WHERE datname = current_database();
+
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE datname=current_database()
+	AND usename=current_user
+	AND pid <> pg_backend_pid();
+	
