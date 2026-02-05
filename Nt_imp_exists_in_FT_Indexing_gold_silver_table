@@ -1,0 +1,50 @@
+
+-- =========================
+-- SILVER (performance)
+-- =========================
+CREATE INDEX IF NOT EXISTS idx_silver_caller_date_ts
+ON silver.silver_call_events (caller_no_clean, call_date, start_ts);
+
+CREATE INDEX IF NOT EXISTS idx_silver_answered
+ON silver.silver_call_events (caller_no_clean, call_date, answered_flag);
+
+-- =========================
+-- GOLD (Power BI)
+-- =========================
+CREATE INDEX IF NOT EXISTS idx_gold_fact_date
+ON gold.fact_call_summary (date_key);
+
+CREATE INDEX IF NOT EXISTS idx_gold_fact_full_date
+ON gold.fact_call_summary (full_date);
+
+CREATE INDEX IF NOT EXISTS idx_gold_fact_caller
+ON gold.fact_call_summary (caller_key);
+
+CREATE INDEX IF NOT EXISTS idx_gold_fact_answered
+ON gold.fact_call_summary (answered_flag);
+
+--CREATE INDEX IF NOT EXISTS idx_bronze_ucid
+--ON bronze.bronze_call_events(ucid);
+
+--CREATE INDEX IF NOT EXISTS idx_silver_call_key
+--ON silver.call_events(call_natural_key);
+
+--CREATE INDEX IF NOT EXISTS idx_silver_callbacks
+--ON silver.calls(same_day_callback_flag, next_day_callback_flag);
+
+--CREATE INDEX IF NOT EXISTS idx_fact_date
+--ON gold.fact_calls(date_key);
+
+--CREATE INDEX IF NOT EXISTS idx_silver_caller_date_ts
+--ON silver.silver_call_events (caller_no_clean, call_date, start_ts);
+
+--CREATE INDEX IF NOT EXISTS idx_silver_answered
+--ON silver.silver_call_events (caller_no_clean, call_date, answered_flag);
+
+--CREATE INDEX IF NOT EXISTS idx_silver_call_nk
+--ON silver.silver_call_events (call_natural_key);
+
+CREATE INDEX IF NOT EXISTS idx_silver_answered_ts 
+ON silver.silver_call_events
+(caller_no_clean, call_date, answered_flag, start_ts);
+
