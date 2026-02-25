@@ -18,7 +18,7 @@ Process:
 
 Global Phone Rules:
     - Strip non-digits
-    - Valid length: 7–15 digits (E.164)
+    - Valid length: 10–15 digits (E.164)
     - Invalid numbers retained but labelled INVALID
 
 Design:
@@ -112,8 +112,8 @@ BEGIN
             WHEN phone_digits ~ '^(91)?[6-9][0-9]{9}$'
                 THEN RIGHT(phone_digits, 10)
 
-            -- VALID INTERNATIONAL (7–15 digits, non-India)
-            WHEN LENGTH(phone_digits) BETWEEN 7 AND 15
+            -- VALID INTERNATIONAL (10–15 digits, non-India)
+            WHEN LENGTH(phone_digits) BETWEEN 10 AND 15
                 THEN phone_digits
 				
 			 -- INVALID
@@ -126,7 +126,7 @@ BEGIN
         CASE
             WHEN phone_digits ~ '^(91)?[6-9][0-9]{9}$'
                 THEN 'INDIA'
-            WHEN LENGTH(phone_digits) BETWEEN 7 AND 15
+            WHEN LENGTH(phone_digits) BETWEEN 10 AND 15
                 THEN 'INTERNATIONAL'
             ELSE 'INVALID'
         END AS caller_country,
