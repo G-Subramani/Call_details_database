@@ -1,3 +1,19 @@
+--contact details validation
+
+SELECT caller_country, count(*) 
+FROM silver.silver_call_events
+GROUP BY caller_country; 
+
+SELECT caller_no_clean, caller_country FROM silver.silver_call_events
+WHERE caller_country='INTERNATIONAL'
+ORDER BY caller_no_clean DESC
+LIMIT 10;
+
+SELECT caller_no_clean, caller_country FROM silver.silver_call_events
+WHERE caller_country='INVALID'
+ORDER BY caller_no_clean DESC
+LIMIT 10;
+
 --answered and missed distribution
 
 SELECT
