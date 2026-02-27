@@ -56,8 +56,9 @@ BEGIN
             FROM silver.silver_call_events a
             WHERE a.caller_no_clean = m.caller_no_clean
               AND a.call_date = m.call_date
-              AND a.answered_flag = TRUE
               AND a.start_ts > m.start_ts
+			  AND LOWER(TRIM(a.call_type)) = 'manual'
+              AND a.answered_flag = TRUE
         ) AS same_day_callback_flag,
 
         /* Next-day callback:
@@ -67,6 +68,7 @@ BEGIN
             FROM silver.silver_call_events a
             WHERE a.caller_no_clean = m.caller_no_clean
               AND a.call_date = m.call_date + 1
+			  AND LOWER(TRIM(a.call_type)) = 'manual'
               AND a.answered_flag = TRUE
         ) AS next_day_callback_flag
 
@@ -94,6 +96,10 @@ BEGIN
         call_type,
         answered_flag,
         missed_flag,
+
+		outbound_attempt_flag,
+		outbound_answered_flag,
+		outbound_missed_flag,
 
         same_day_callback_flag,
         next_day_callback_flag,
@@ -123,6 +129,14 @@ BEGIN
         s.call_type,
         COALESCE(s.answered_flag, FALSE) AS answered_flag,
     	COALESCE(s.missed_flag, FALSE)  AS missed_flag,
+
+		(s.call_type = 'Manual') AS outbound_attempt_flag,
+
+		(s.call_type = 'Manual' AND COALESCE(s.answered_flag, FALSE))
+		    AS outbound_answered_flag,
+		
+		(s.call_type = 'Manual' AND COALESCE(s.missed_flag, FALSE))
+		    AS outbound_missed_flag,
 
         COALESCE(mcb.same_day_callback_flag, FALSE),
         COALESCE(mcb.next_day_callback_flag, FALSE),
