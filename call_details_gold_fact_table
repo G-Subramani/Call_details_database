@@ -64,6 +64,11 @@ CREATE TABLE gold.fact_call_summary (
     answered_flag BOOLEAN NOT NULL,
     missed_flag BOOLEAN NOT NULL,
 
+	-- Manual attempt tracking
+	outbound_attempt_flag   BOOLEAN NOT NULL DEFAULT FALSE,
+	outbound_answered_flag  BOOLEAN NOT NULL DEFAULT FALSE,
+	outbound_missed_flag    BOOLEAN NOT NULL DEFAULT FALSE,
+
     -- Callback indicators
     same_day_callback_flag BOOLEAN DEFAULT FALSE,
     next_day_callback_flag BOOLEAN DEFAULT FALSE,
